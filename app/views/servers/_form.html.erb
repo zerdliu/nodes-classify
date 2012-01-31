@@ -1,0 +1,46 @@
+<%= form_for(@server) do |f| %>
+  <% if @server.errors.any? %>
+    <div id="error_explanation">
+      <h2><%= pluralize(@server.errors.count, "error") %> prohibited this server from being saved:</h2>
+
+      <ul>
+      <% @server.errors.full_messages.each do |msg| %>
+        <li><%= msg %></li>
+      <% end %>
+      </ul>
+    </div>
+  <% end %>
+
+  <div class="field">
+    <%= f.label :name %><br />
+    <%= f.text_field :name %>
+  </div>
+
+   <div class="field">
+     <%= f.label :project_id %><br />
+     <%= f.collection_select :project_id , Project.all, :id, :name %>
+   </div>
+
+  <div class="field">
+    <%= f.label :tag %><br />
+        group: <br />
+    <% @tags.each do |tag| %>
+        <% if tag.name.match(/group/) %>
+          <%= check_box_tag "tag_ids[]", tag.id, @tags_selected.include?(tag) %>
+          <%= tag.name %>
+        <% end %>
+    <% end %>
+        <br />
+        others: <br />
+    <% @tags.each do |tag| %>
+        <% unless tag.name.match(/group/) %>
+          <%= check_box_tag "tag_ids[]", tag.id, @tags_selected.include?(tag) %>
+          <%= tag.name %>
+        <% end %>
+    <% end %>
+  </div>
+    
+  <div class="actions">
+    <%= f.submit %>
+  </div>
+<% end %>
