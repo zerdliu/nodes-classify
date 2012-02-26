@@ -9,6 +9,8 @@ Nodes::Application.routes.draw do
   match 'select_servers' => 'select_servers#index'
   match 'search_servers' => 'servers#search_servers'
   match 'search_tags' => 'servers#search_tags'
+  match 'search_project' => 'projects#search_project'
+  match 'search_node_info' => 'servers#search_node_info'
   # The priority is based upon order of creation:
   # first created -> highest priority.
 

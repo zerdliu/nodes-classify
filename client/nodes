@@ -1,0 +1,228 @@
+#!/usr/bin/env ruby
+
+require 'optparse'
+require 'yaml'
+require 'json'
+require 'net/http'
+
+
+@legal_status = %w{ running offline }
+
+def get_node_by_tag(project,query)
+
+  url = "http://ai-imci-control00.ai01:8989/search_project.json?project=#{project}" 
+  resp = Net::HTTP.get_response(URI.parse(url))
+  resp_text = resp.body
+  json = JSON.parse(resp_text)
+  id = json["id"]
+  puts "Fatal: project[#{project}] id not exist." unless id
+
+  url = "http://ai-imci-control00.ai01:8989/search_servers.json?#{query}" 
+  resp = Net::HTTP.get_response(URI.parse(url))
+  resp_text = resp.body
+  json = JSON.parse(resp_text)
+  json.select { |node| node["project_id"] == id } 
+end
+
+def get_nodes(project, tags)
+  @query
+  return get_node_by_tag(project, "") unless tags
+  if tags =~ /^[_\w\d,+]+$/
+    if tags =~ /.*\+.*/
+      @query = tags.split('+').map { |tag| "tag_names[]=#{tag}" }.join("&") + "&logic=AND"
+    elsif tags =~ /.*,.*/
+      @query = tags.split(',').map { |tag| "tag_names[]=#{tag}" }.join("&") + "&logic=OR"
+    else 
+      @query = "tag_names[]=#{tags}"
+    end
+  else 
+    puts "Fatal: --tags format error. Please check."
+    exit 121
+  end
+  get_node_by_tag(project, @query)
+end
+
+def get_node_info(name)
+  url = "http://ai-imci-control00.ai01:8989/search_node_info.json?name=#{name}" # ACME boomerang
+  resp = Net::HTTP.get_response(URI.parse(url))
+  resp_text = resp.body
+  json = JSON.parse(resp_text)
+end
+
+def get_project_id(project_name)
+  url = "http://ai-imci-control00.ai01:8989/projects.json"
+  resp = Net::HTTP.get_response(URI.parse(url))
+  resp_text = resp.body
+  json = JSON.parse(resp_text)
+  json.select { |x| x["name"] == project_name }.map { |x| x["id"] }.first
+end
+
+def get_tag_id(tag_name)
+  url = "http://ai-imci-control00.ai01:8989/tags.json"
+  resp = Net::HTTP.get_response(URI.parse(url))
+  resp_text = resp.body
+  json = JSON.parse(resp_text)
+  json.select { |x| x["name"] == tag_name }.map { |x| x["id"] }.first
+end
+
+def is_node_exist(node_name)
+  url = "http://ai-imci-control00.ai01:8989/servers.json"
+  resp = Net::HTTP.get_response(URI.parse(url))
+  resp_text = resp.body
+  json = JSON.parse(resp_text)
+  @nodes = json.select { |x| x["name"] == node_name }.map { |x| x["id"] }
+  not @nodes.empty?
+end
+
+if ARGV.first.nil?
+  ARGV.push "-h"
+else 
+  subcommand = ARGV.shift
+  ARGV.push "-h" unless %w{ search insert change delete }.include?(subcommand)
+end
+
+options={}
+global = OptionParser.new do |opts|
+  opts.banner = "Usage: nodes [search|insert|change|delete] [options]"
+  opts.separator ""
+  opts.separator "    nodes search: search node or tags"
+  opts.separator "        nodes search -p|--project=project [--tags=tags1[,|+tags2]] [--status=running]"
+  opts.separator "        nodes search -n|--node=node"
+  opts.separator ""
+  opts.separator "    nodes insert : insert project or node"
+  opts.separator "        nodes insert -n|--node=node -p|--project=project --tags=tags1[,tags2,tags3] [--status=offline]"
+  opts.separator ""
+  opts.separator "    nodes change : change node status."
+  opts.separator "        nodes change -n|--node=node --status=offline"
+  opts.separator ""
+  opts.separator "    nodes delete: delete node."
+  opts.separator "        nodes delete -n|--node=node"
+  opts.separator ""
+  opts.separator ""
+  opts.on("-p", "--project=project", String,
+          "Project name, such as: IM") { |v| options[:project] = v }
+  opts.on("-n", "--node=node", String,
+          "Node name, such as: ai-imci-control00.ai01") { |v| options[:node] = v }
+  opts.on("--tags=tags", String,
+        "When specifying more than one tag, use the comma to specify a boolean OR operation, and a plus-sign ('+') to specify a boolean AND operation. To require both tags 'as' and 'jx', specify 'as+jx' This will match nodes that have both tags only. To match any nodes that have one or the other tags, use 'as,bs'.") { |v| options[:tags] = v }
+  opts.on("--status=status", String,
+          "Node status : running or offline") { |v| options[:status] = v }
+  opts.separator ""
+  opts.on("-h", "--help", "Show this help message.") { puts opts; exit }
+
+end.parse!
+
+#puts options 
+
+@node_name = options[:node]
+@status = options[:status] 
+if @status
+unless @legal_status.include?(@status)
+  puts "illegal status. #{@status}" 
+  exit 100
+end
+end
+
+case subcommand
+when 'search'
+  if ( options[:project] and options[:node] )
+    puts "Fatal: -p and -n could not set same time."
+    exit 121
+  end
+
+  ## search nodes 
+  if options[:project] 
+    ## set --status
+    if options[:status]
+      puts get_nodes(options[:project], options[:tags]).select { |node| node["status"] == options[:status] }.map { |node| node["name"] } 
+    else 
+      puts get_nodes(options[:project], options[:tags]).map { |node| node["name"] } 
+    end 
+  end
+
+  ## search node info
+  if options[:node]
+    puts get_node_info(options[:node]).to_yaml 
+  end
+
+when 'insert'
+  @status = options[:status] || "offline"
+  puts "-n|--node must be set"    unless options[:node]
+  puts "-p|--project must be set" unless options[:project]
+  puts "--tags must be set"       unless options[:tags]
+  
+  @project_id = get_project_id(options[:project])
+  unless @project_id
+    puts "Project:" + options[:project] + " not exist. You should add it. \n" + "Please visit http://ai-imci-control00.ai01:8989/projects" 
+  end
+
+  @tag_ids = []
+  options[:tags].split(",").each  do |tag| 
+    @tag_id = get_tag_id(tag)
+    unless @tag_id
+      puts "Tag: #{tag} not exist. You should add it. \n" + "Please  visit http://ai-imci-controll00.ai01:8989/tags" 
+      exit 121
+    end
+    @tag_ids.push @tag_id
+  end
+
+  if is_node_exist(@node_name)
+    puts "Node: " + @node_name + " already exist. Please check."
+    exit 121
+  end
+
+  @curl_tag_args = @tag_ids.map { |tag_id| "-d tag_ids[]=#{tag_id}" }.join(" ")
+  @curl_args = "curl -d 'server[name]=#{@node_name}' -d 'server[project_id]=#{@project_id}' -d 'server[status]=#{@status}' #{@curl_tag_args} -f http://ai-imci-control00.ai01:8989/servers &>/dev/null"
+  if system(@curl_args)
+    puts "Notice: Add node success. #{@node_name}"
+  else 
+    puts "Fatal: Add node fail. #{@node_name}"
+    exit 123
+  end
+
+when 'change'
+
+  @status = options[:status] || "offline"
+  unless options[:node]
+    puts "-n|--node must be set" 
+    exit 111 
+  end
+  unless @status
+    puts "--status must be set" 
+    exit 111 
+  end
+  @node_id = get_node_info(options[:node])["id"]
+  unless @node_id
+    puts "node not exist. please check"
+    exit 121
+  end
+  @curl_args = "curl -X PUT -d 'server[status]=#{@status}' http://ai-imci-control00.ai01:8989/servers/#{@node_id} &>/dev/null"
+  if system(@curl_args)
+    puts "Notice: Change node[#{options[:node]}] status to #{@status} success."
+  else
+    puts "Fatal: Change node[#{options[:node]}] status to #{@status} fail."
+    exit 123
+  end
+
+when 'delete'
+  unless options[:node]
+    puts "-n|--node must be set" 
+    exit 111 
+  end
+  @node_id = get_node_info(options[:node])["id"]
+  unless @node_id
+    puts "node not exist. please check"
+    exit 121
+  end
+  @curl_args = "curl -X DELETE http://ai-imci-control00.ai01:8989/servers/#{@node_id} &>/dev/null"
+  if system(@curl_args)
+    puts "Notice: Delete node[#{options[:node]}] success."
+  else
+    puts "Fatal: Delete node[#{options[:node]}] fail."
+    exit 123
+  end
+end
+
+
+
+

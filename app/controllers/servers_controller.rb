@@ -61,6 +61,18 @@ class ServersController < ApplicationController
   # PUT /servers/1
   # PUT /servers/1.json
   def update
+    @server = Server.find(params[:id])
+    @server.tags = params[:tag_ids].map { |id| Tag.find(id) }
+
+    respond_to do |format|
+      if @server.update_attributes(params[:server])
+        format.html { redirect_to servers_path, notice: 'Server was successfully updated.' }
+        format.json { render json: @server, status: :updated, location: @server }
+      else
+        format.html { render action: "edit" }
+        format.json { render json: @server.errors, status: :unprocessable_entity }
+      end
+    end
   end
 
   # DELETE /servers/1
@@ -77,7 +89,7 @@ class ServersController < ApplicationController
 
   def search_servers
     #@tags_selected = ( params[:tag_ids].map { |id| Tag.find(id) } ) || []
-    @servers = Server.find_by_tag(params[:logic], params[:tag_names]) || Server.all
+    @servers = Server.find_by_tag(params[:logic] , params[:tag_names]) || Server.all
 
     respond_to do |format|
       format.json { render json: @servers }
@@ -94,4 +106,14 @@ class ServersController < ApplicationController
     end
   end
 
+  def search_node_info
+    @server = Server.find_by_name(params[:name])
+    @tags = @server.tags.map { |tag| tag[:name] }
+    @server[:tags_name] = @tags
+    @server[:project_name] = @server.project.name
+
+    respond_to do |format|
+      format.json { render json: @server }
+    end
+  end
 end

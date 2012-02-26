@@ -80,4 +80,14 @@ class ProjectsController < ApplicationController
       format.json { head :ok }
     end
   end
+
+  def search_project
+      @servers = Project.find_by_name(params[:project])
+  
+      respond_to do |format|
+        format.json { render json: @servers }
+      end 
+  end 
+
 end
+

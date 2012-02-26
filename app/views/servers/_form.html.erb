@@ -39,7 +39,14 @@
         <% end %>
     <% end %>
   </div>
-    
+  
+  <br />
+  <div class="field">
+    <%= f.label :status %><br />
+    <%= f.select :status, %w{ running offline } %>
+  </div>
+
+
   <div class="actions">
     <%= f.submit %>
   </div>
