@@ -62,8 +62,9 @@ class ServersController < ApplicationController
   # PUT /servers/1.json
   def update
     @server = Server.find(params[:id])
-    @server.tags = params[:tag_ids].map { |id| Tag.find(id) }
-
+    if params[:tag_ids]
+      @server.tags = params[:tag_ids].map { |id| Tag.find(id) }
+    end
     respond_to do |format|
       if @server.update_attributes(params[:server])
         format.html { redirect_to servers_path, notice: 'Server was successfully updated.' }
@@ -107,10 +108,13 @@ class ServersController < ApplicationController
   end
 
   def search_node_info
-    @server = Server.find_by_name(params[:name])
-    @tags = @server.tags.map { |tag| tag[:name] }
-    @server[:tags_name] = @tags
-    @server[:project_name] = @server.project.name
+    @server = {}
+    if Server.find_by_name(params[:name])
+      @server = Server.find_by_name(params[:name])
+      @tags = @server.tags.map { |tag| tag[:name] }
+      @server[:tags_name] = @tags
+      @server[:project_name] = @server.project.name
+    end
 
     respond_to do |format|
       format.json { render json: @server }
