@@ -6,7 +6,6 @@
     <th>Description</th>
     <th></th>
     <th></th>
-    <th></th>
   </tr>
 
 <% @tags.each do |tag| %>
@@ -15,7 +14,6 @@
     <td><%= tag.description %></td>
     <td><%= link_to 'Show', tag %></td>
     <td><%= link_to 'Edit', edit_tag_path(tag) %></td>
-    <td><%= link_to 'Destroy', tag, confirm: 'Are you sure?', method: :delete %></td>
   </tr>
 <% end %>
 </table>

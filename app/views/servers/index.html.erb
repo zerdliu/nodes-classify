@@ -6,12 +6,11 @@
     <th>Project</th>
     <th>Tags</th>
     <th>Status</th>
-    <th></th>
   </tr>
 
 <% @servers.each do |server| %>
   <tr>
-    <td><%= link_to server.name, edit_server_path(server) %></td>
+    <td><%= server.name %></td>
     <td><%= link_to server.project.name, project_path(server.project) %></td>
     <td>
       <% server.tags.each do |tag| %>
@@ -19,11 +18,9 @@
       <% end %>
     </td>
     <td><%= server.status %></td>
-    <td><%= link_to 'Destroy', server, confirm: 'Are you sure?', method: :delete %></td>
   </tr>
 <% end %>
 </table>
 
 <br />
 
-<%= link_to 'New Server', new_server_path %>
