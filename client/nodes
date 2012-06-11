@@ -6,7 +6,6 @@ require 'json'
 require 'net/http'
 
 
-@legal_status = %w{ running offline }
 
 if ARGV.first.nil?
   ARGV.push "-h"
@@ -20,14 +19,20 @@ global = OptionParser.new do |opts|
   opts.banner = "Usage: nodes [search|insert|change|delete] [options]"
   opts.separator ""
   opts.separator "    nodes search: search node or tags"
-  opts.separator "        nodes search -p|--project=project [--tags=tags1[,|+tags2]] [--status=running]"
+  opts.separator "        nodes search -p|--project=project [--tags=tags1[,|+tags2]] [--status=running] [-x|--exclude-nodes=[node1[,node2]]]"
+  opts.separator "            default: find all nodes(running or offline)"
+  opts.separator "            tags separate by ',' or '+'"
+  opts.separator "            exclude nodes separate by ',' "
   opts.separator "        nodes search -n|--node=node"
   opts.separator ""
-  opts.separator "    nodes insert : insert project or node"
+  opts.separator "    nodes insert : insert node"
   opts.separator "        nodes insert -n|--node=node -p|--project=project --tags=tags1[,tags2,tags3] [--status=offline]"
+  opts.separator "            default: set status=offline"
+  opts.separator "            tags separate by ','"
   opts.separator ""
-  opts.separator "    nodes change : change node status."
-  opts.separator "        nodes change -n|--node=node --status=offline"
+  opts.separator "    nodes change : change node"
+  opts.separator "        nodes change -n|--node=node [--status=offline] [-p|--project=project] [--tags=tags1[,tags2]]"
+  opts.separator "            tags separate by ','"
   opts.separator ""
   opts.separator "    nodes delete: delete node."
   opts.separator "        nodes delete -n|--node=node"
@@ -36,11 +41,13 @@ global = OptionParser.new do |opts|
   opts.on("-p", "--project=project", String,
           "Project name, such as: IM") { |v| options[:project] = v }
   opts.on("-n", "--node=node", String,
-          "Node name, such as: ai-imci-control00.ai01") { |v| options[:node] = v }
-  opts.on("--tags=tags", String,
+          "Node name, such as: yf-imcap-as00.yf01") { |v| options[:node] = v }
+  opts.on("-t", "--tags=tags", String,
         "When specifying more than one tag, use the comma to specify a boolean OR operation, and a plus-sign ('+') to specify a boolean AND operation. To require both tags 'as' and 'jx', specify 'as+jx' This will match nodes that have both tags only. To match any nodes that have one or the other tags, use 'as,bs'.") { |v| options[:tags] = v }
-  opts.on("--status=status", String,
+  opts.on("-s", "--status=status", String,
           "Node status : running or offline") { |v| options[:status] = v }
+  opts.on("-x", "--exclude-nodes=nodes", String,
+          "Exclude nodes, such as: server1,server2,server3, nodes separate by ','") { |v| options[:xnodes] = v }
   opts.on("--service=service", String,
           "service url : default: ai-imci-control00.ai01:8989") { |v| options[:service] = v }
   opts.separator ""
@@ -48,16 +55,17 @@ global = OptionParser.new do |opts|
 
 end.parse!
 
-#puts options 
 
-@service_url = options[:service] || "ai-imci-control00.ai01:8989"
-@node_name = options[:node]
-@status = options[:status] 
-if @status
-unless @legal_status.include?(@status)
-  puts "illegal status. #{@status}" 
-  exit 100
+def ping_host(host) 
+  result = `ping #{host} -c1 2>/dev/null`
+  result =~ /^.*\((\d+.\d+.\d+.\d+)\).*$/ 
+  return $1 ? true : false
 end
+
+class Array
+  def repeat?
+    return self == self.uniq ? false : true
+  end 
 end
 
 def get_node_by_tag(project,query)
@@ -81,9 +89,24 @@ def get_nodes(project, tags)
   return get_node_by_tag(project, "") unless tags
   if tags =~ /^[_\w\d,+]+$/
     if tags =~ /.*\+.*/
-      @query = tags.split('+').map { |tag| "tag_names[]=#{tag}" }.join("&") + "&logic=AND"
+      @query = tags.split('+').map do |tag| 
+        if get_tag_id(tag) 
+          "tag_names[]=#{tag}" 
+        else 
+          puts "Fatal: tag: #{tag} not exist."
+          exit 112
+        end
+      end.join("&") + "&logic=AND"
+
     elsif tags =~ /.*,.*/
-      @query = tags.split(',').map { |tag| "tag_names[]=#{tag}" }.join("&") + "&logic=OR"
+      @query = tags.split(',').map do |tag| 
+        if get_tag_id(tag)
+          "tag_names[]=#{tag}" 
+        else
+          puts "Fatal: tag: #{tag} not exist."
+          exit 112
+        end
+      end.join("&") + "&logic=OR"
     else 
       @query = "tag_names[]=#{tags}"
     end
@@ -126,42 +149,91 @@ def is_node_exist(node_name)
   not @nodes.empty?
 end
 
+@legal_status = %w{ running offline }
+@service_url = options[:service] || "ai-imci-control00.ai01:8989"
+@node_name = options[:node]
+@status = options[:status] 
+@project_name = options[:project]
+@tags_args = options[:tags] || ""
+if @tags_args.split(",").repeat?
+  puts "Wrong: tags:" + @tags_args + " repeat."
+  exit 101
+end
+
+if @status
+  unless @legal_status.include?(@status)
+    puts "illegal status. #{@status}" 
+    exit 100
+  end
+end
+if @project_name
+  @project_id = get_project_id(@project_name)
+  unless @project_id
+    puts "Project:" + @project_name + " not exist. You should add it. \n" + "Please visit http://#{@service_url}/projects" 
+    exit 100
+  end
+end
 
 case subcommand
 when 'search'
-  if ( options[:project] and options[:node] )
-    puts "Fatal: -p and -n could not set same time."
+  if ( @project_name and @node_name )
+    puts "Fatal: -p and -n could not set same time when search."
     exit 121
   end
 
+  if ( not @project_name and not @node_name )
+    puts "Fatal: -p or -n should set one when search." 
+    exit 121
+  end
   ## search nodes 
-  if options[:project] 
+  if @project_name 
+
+    @xnodes = options[:xnodes] ? options[:xnodes].split(',') : []
+    @xnodes.each do |node|
+      unless is_node_exist(node)
+        puts "Node: #{node} not exist."
+        exit 100
+      end
+    end
     ## set --status
-    if options[:status]
-      puts get_nodes(options[:project], options[:tags]).select { |node| node["status"] == options[:status] }.map { |node| node["name"] } 
+    if @status
+      puts get_nodes(@project_name, options[:tags]).select { |node| node["status"] == @status }.map { |node| node["name"] }.reject { |node| @xnodes.include?(node) } 
     else 
-      puts get_nodes(options[:project], options[:tags]).map { |node| node["name"] } 
+      puts get_nodes(@project_name, options[:tags]).map { |node| node["name"] }.reject { |node| @xnodes.include?(node) } 
     end 
   end
 
   ## search node info
-  if options[:node]
-    puts get_node_info(options[:node]).to_yaml 
+  if @node_name
+    unless is_node_exist(@node_name)
+      puts "Node: #{@node_name} not exist."
+      exit 100
+    end
+    puts get_node_info(@node_name).to_yaml 
   end
 
 when 'insert'
-  @status = options[:status] || "offline"
-  puts "-n|--node must be set"    unless options[:node]
-  puts "-p|--project must be set" unless options[:project]
-  puts "--tags must be set"       unless options[:tags]
-  
-  @project_id = get_project_id(options[:project])
-  unless @project_id
-    puts "Project:" + options[:project] + " not exist. You should add it. \n" + "Please visit http://#{@service_url}/projects" 
+  @status = @status || "offline"
+  unless @node_name
+    puts "-n|--node must be set"   
+    exit 121
+  end 
+  unless ping_host(@node_name)
+    puts "Ping #{@node_name} , no response."
+    exit 122
   end
+  unless @project_name
+    puts "-p|--project must be set" 
+    exit 121
+  end
+  unless options[:tags]
+    puts "--tags must be set"  
+    exit 121
+  end
+  
 
   @tag_ids = []
-  options[:tags].split(",").each  do |tag| 
+  options[:tags].split(",").uniq.each  do |tag| 
     @tag_id = get_tag_id(tag)
     unless @tag_id
       puts "Tag: #{tag} not exist. You should add it. \n" + "Please  visit http://#{@service_url}/tags" 
@@ -170,6 +242,7 @@ when 'insert'
     @tag_ids.push @tag_id
   end
 
+  @node_name.sub!(/.baidu.com/, '') ; 
   if is_node_exist(@node_name)
     puts "Node: " + @node_name + " already exist. Please check."
     exit 121
@@ -186,47 +259,70 @@ when 'insert'
 
 when 'change'
 
-  @status = options[:status] || "offline"
-  unless options[:node]
+  if @project_name 
+    @project_id = get_project_id(@project_name)
+    unless @project_id
+      puts "Project:" + @project_name + " not exist. You should add it. \n" + "Please visit http://#{@service_url}/projects" 
+      exit 121
+    end
+  end 
+
+  @tag_ids = []
+  if options[:tags]
+    options[:tags].split(",").uniq.each  do |tag| 
+      @tag_id = get_tag_id(tag)
+      unless @tag_id
+        puts "Tag: #{tag} not exist. You should add it. \n" + "Please  visit http://#{@service_url}/tags" 
+        exit 121
+      end
+      @tag_ids.push @tag_id
+    end
+  end
+
+  unless @node_name
     puts "-n|--node must be set" 
     exit 111 
   end
-  unless @status
-    puts "--status must be set" 
-    exit 111 
-  end
-  @node_id = get_node_info(options[:node])["id"]
+
+  @node_id = get_node_info(@node_name)["id"]
   unless @node_id
-    puts "node not exist. please check"
+    puts "Fatal: node: #{@node_name} not exist. please check"
     exit 121
   end
-  @curl_args = "curl -X PUT -d 'server[status]=#{@status}' http://#{@service_url}/servers/#{@node_id} &>/dev/null"
-  if system(@curl_args)
-    puts "Notice: Change node[#{options[:node]}] status to #{@status} success."
+
+  if ( not @status and not @project_id and @tag_ids.empty? ) 
+    puts "Nothing changed."
+    exit 
+  end
+
+  @curl_args_status = @status ? "-d 'server[status]=#{@status}'" : ""
+  @curl_args_tags = @tag_ids.empty? ? "" : @tag_ids.map { |id| "-d 'tag_ids[]=#{id}'"}.join(" ")
+  @curl_args_project = @project_id ? "-d 'server[project_id]=#{@project_id}'" : ""
+
+  @curl_command = "curl -X PUT #{@curl_args_project} #{@curl_args_tags} #{@curl_args_status} -f http://#{@service_url}/servers/#{@node_id} &>/dev/null"
+  if system(@curl_command)
+    puts "Notice: Change node[#{@node_name}] success." 
   else
-    puts "Fatal: Change node[#{options[:node]}] status to #{@status} fail."
+    puts "Fatal: Change node[#{@node_name}] fail."
     exit 123
   end
 
 when 'delete'
-  unless options[:node]
+  unless @node_name
     puts "-n|--node must be set" 
     exit 111 
   end
-  @node_id = get_node_info(options[:node])["id"]
+  @node_id = get_node_info(@node_name)["id"]
   unless @node_id
-    puts "node not exist. please check"
+    puts "Fatal: node: #{@node_name} not exist. please check"
     exit 121
   end
   @curl_args = "curl -X DELETE http://#{@service_url}/servers/#{@node_id} &>/dev/null"
   if system(@curl_args)
-    puts "Notice: Delete node[#{options[:node]}] success."
+    puts "Notice: Delete node[#{@node_name}] success."
   else
-    puts "Fatal: Delete node[#{options[:node]}] fail."
+    puts "Fatal: Delete node[#{@node_name}] fail."
     exit 123
   end
 end
-
-
-
 
